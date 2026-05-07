@@ -1280,3 +1280,106 @@ body {
   body { background: white; color: black; }
   .card { border: 1px solid #ccc; box-shadow: none; }
 }
+/* ═══════════════════════════════════════════════════════════════════════════
+   IMPORT/EXPORT CONFIGURATION
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.import-export-section {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.import-export-group {
+  flex: 1;
+  min-width: 250px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.import-export-group h4 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.small-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  display: block;
+}
+
+.file-input {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.file-input::file-selector-button {
+  background: var(--accent-blue);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+  margin-right: 8px;
+  transition: var(--transition);
+}
+
+.file-input::file-selector-button:hover {
+  background: #0284c7;
+}
+
+.import-export-divider {
+  width: 1px;
+  background: var(--border-color);
+  min-height: 200px;
+}
+
+.import-status {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  display: none;
+}
+
+.import-status.success {
+  display: block;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: var(--accent-green);
+}
+
+.import-status.error {
+  display: block;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--accent-red);
+}
+
+@media (max-width: 768px) {
+  .import-export-section {
+    flex-direction: column;
+  }
+
+  .import-export-divider {
+    display: none;
+  }
+
+  .import-export-group {
+    min-width: 100%;
+  }
+}

@@ -575,10 +575,60 @@ const Exporter = (() => {
     UI.showToast('Excel de configuración exportado correctamente', 'success');
   }
 
+  function exportConfigurationJSON(tanks) {
+    const data = Storage.load();
+    const exportData = {
+      version: '2.0.0',
+      exportDate: new Date().toISOString(),
+      tanks: data.tanks,
+      settings: data.settings
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `AquaOps_Config_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    UI.showToast('Configuración exportada correctamente', 'success');
+  }
+
+  function importConfigurationJSON(fileContent) {
+    try {
+      const importedData = JSON.parse(fileContent);
+
+      // Validar estructura
+      if (!importedData.tanks || !Array.isArray(importedData.tanks)) {
+        throw new Error('Formato de archivo inválido: no contiene array de tanques');
+      }
+
+      // Validar versión
+      if (importedData.version && importedData.version !== '2.0.0') {
+        console.warn(`Versión diferente: ${importedData.version}`);
+      }
+
+      // Validar cada tanque
+      importedData.tanks.forEach((tank, idx) => {
+        if (!tank.name || tank.height === undefined || tank.area === undefined) {
+          throw new Error(`Tanque ${idx + 1}: datos incompletos`);
+        }
+      });
+
+      return { success: true, data: importedData };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
   return {
     exportStatusPDF, exportStatusExcel,
     exportProjectionPDF, exportProjectionExcel,
-    exportConfigPDF, exportConfigExcel
+    exportConfigPDF, exportConfigExcel,
+    exportConfigurationJSON, importConfigurationJSON
   };
 })();
 
@@ -990,7 +1040,6 @@ const App = (() => {
       document.getElementById(id).addEventListener('input', updateCalcVolume);
     });
 
-    // Nivel actual: % → m
     document.getElementById('tankCurrentLevelPct').addEventListener('input', function () {
       const height = parseFloat(document.getElementById('tankHeight').value) || 0;
       if (height > 0) {
@@ -999,7 +1048,6 @@ const App = (() => {
       }
     });
 
-    // Nivel actual: m → %
     document.getElementById('tankCurrentLevelM').addEventListener('input', function () {
       const height = parseFloat(document.getElementById('tankHeight').value) || 0;
       if (height > 0) {
@@ -1008,7 +1056,6 @@ const App = (() => {
       }
     });
 
-    // Nivel objetivo: % → m
     document.getElementById('tankTargetLevelPct').addEventListener('input', function () {
       const height = parseFloat(document.getElementById('tankHeight').value) || 0;
       if (height > 0) {
@@ -1017,7 +1064,6 @@ const App = (() => {
       }
     });
 
-    // Nivel objetivo: m → %
     document.getElementById('tankTargetLevelM').addEventListener('input', function () {
       const height = parseFloat(document.getElementById('tankHeight').value) || 0;
       if (height > 0) {
@@ -1026,7 +1072,6 @@ const App = (() => {
       }
     });
 
-    // Recalcular duales al cambiar altura
     document.getElementById('tankHeight').addEventListener('input', function () {
       updateCalcVolume();
       const height     = parseFloat(this.value) || 0;
@@ -1449,7 +1494,6 @@ const App = (() => {
     });
   }
 
-  // Actualiza la barra de nivel en la fila de edición masiva
   function updateBulkLevelBar(id, pct, tbody) {
     const fill = tbody
       ? tbody.querySelector(`.bulk-level-bar-fill[data-id="${id}"]`)
@@ -1459,14 +1503,12 @@ const App = (() => {
     const clampedPct = Math.min(100, Math.max(0, pct));
     fill.style.width = clampedPct + '%';
 
-    // Color dinámico según nivel
     if      (clampedPct >= 80) fill.style.background = '#10b981';
     else if (clampedPct >= 40) fill.style.background = '#0ea5e9';
     else if (clampedPct >= 20) fill.style.background = '#f97316';
     else                       fill.style.background = '#ef4444';
   }
 
-  // Recalcula tendencia y tiempo crítico en tiempo real para una fila
   function updateBulkRowPreview(id, tbody) {
     const resolvedTbody = tbody || document.getElementById('bulkEditBody');
     const row  = resolvedTbody.querySelector(`tr[data-id="${id}"]`);
@@ -1491,11 +1533,9 @@ const App = (() => {
       ? Calculator.formatTime(tte)
       : '—';
 
-    // Actualizar celda de tendencia
     const trendCell = row.querySelector('.bulk-trend-cell');
     if (trendCell) trendCell.innerHTML = UI.getTrendIcon(trendType);
 
-    // Actualizar badge de tiempo crítico
     const badge = row.querySelector('.bulk-critical-badge');
     if (badge) {
       badge.textContent = criticalTime;
@@ -1519,7 +1559,6 @@ const App = (() => {
       const outflow = parseFloat(row.querySelector('.bulk-outflow').value);
       const levelM  = parseFloat(row.querySelector('.bulk-level-m').value);
 
-      // Validaciones
       if (isNaN(inflow) || inflow < 0) {
         errors.push(`"${tank.name}": caudal de entrada inválido`); return;
       }
@@ -1536,7 +1575,6 @@ const App = (() => {
         errors.push(`"${tank.name}": nivel ${levelM}m supera la altura total ${tank.height}m`); return;
       }
 
-      // Detectar cambios y aplicar
       const changed =
         tank.currentInflow !== inflow  ||
         tank.outflow       !== outflow ||
@@ -1564,7 +1602,6 @@ const App = (() => {
     renderBulkEdit();
     updateAlertBadge();
 
-    // Refrescar dashboard si está activo
     if (state.currentView === 'dashboard') renderDashboard();
 
     const statusEl = document.getElementById('bulkStatus');
@@ -1869,6 +1906,100 @@ const App = (() => {
       Exporter.exportConfigPDF(state.tanks));
     document.getElementById('exportExcelConfig').addEventListener('click', () =>
       Exporter.exportConfigExcel(state.tanks));
+
+    // NUEVOS: Import/Export JSON
+    document.getElementById('exportConfigJsonBtn').addEventListener('click', () => {
+      Exporter.exportConfigurationJSON(state.tanks);
+    });
+
+    document.getElementById('importConfigBtn').addEventListener('click', handleImportClick);
+    document.getElementById('importConfigFile').addEventListener('change', handleFileSelect);
+  }
+
+  function handleImportClick() {
+    const fileInput = document.getElementById('importConfigFile');
+    if (!fileInput.files.length) {
+      UI.showToast('Por favor selecciona un archivo', 'warning');
+      return;
+    }
+
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+      try {
+        const fileContent = e.target.result;
+        const result = Exporter.importConfigurationJSON(fileContent);
+
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+
+        const importedData = result.data;
+        const tanksCount = importedData.tanks.length;
+
+        // Mostrar confirmación
+        const confirmed = confirm(
+          `✓ Se importarán ${tanksCount} tanque(s).\n\n` +
+          `¿Desea reemplazar la configuración actual?`
+        );
+
+        if (!confirmed) return;
+
+        // Importar datos
+        const currentData = Storage.load();
+        currentData.tanks = importedData.tanks;
+        if (importedData.settings) {
+          currentData.settings = { ...currentData.settings, ...importedData.settings };
+        }
+
+        Storage.save(currentData);
+        state.tanks = currentData.tanks;
+        state.settings = currentData.settings;
+
+        // Limpiar input
+        fileInput.value = '';
+
+        // Mostrar estado
+        const statusEl = document.getElementById('importStatus');
+        statusEl.className = 'import-status success';
+        statusEl.innerHTML = `
+          <strong>✓ Importación exitosa</strong><br>
+          ${tanksCount} tanque(s) importado(s) correctamente
+        `;
+        setTimeout(() => statusEl.className = 'import-status', 3000);
+
+        // Refrescar UI
+        renderCurrentView();
+        UI.showToast(`${tanksCount} tanque(s) importado(s) correctamente`, 'success');
+
+      } catch (error) {
+        const statusEl = document.getElementById('importStatus');
+        statusEl.className = 'import-status error';
+        statusEl.innerHTML = `
+          <strong>✗ Error en la importación</strong><br>
+          ${error.message}
+        `;
+
+        UI.showToast(`Error: ${error.message}`, 'error', 5000);
+        console.error('Import error:', error);
+      }
+    };
+
+    reader.onerror = function() {
+      UI.showToast('Error al leer el archivo', 'error');
+    };
+
+    reader.readAsText(file);
+  }
+
+  function handleFileSelect(e) {
+    const file = e.target.files[0];
+    if (file) {
+      const fileName = file.name;
+      const fileSize = (file.size / 1024).toFixed(2);
+      console.log(`Archivo seleccionado: ${fileName} (${fileSize} KB)`);
+    }
   }
 
   function renderReports() {

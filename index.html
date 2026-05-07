@@ -326,6 +326,40 @@
           </div>
         </div>
       </div>
+
+      <div class="card report-card">
+        <div class="card-header">
+          <h3>💾 Importar/Exportar Configuración</h3>
+        </div>
+        <div class="card-body">
+          <p>Guarda y restaura toda la configuración de tanques, alertas y parámetros.</p>
+          
+          <div class="import-export-section">
+            <div class="import-export-group">
+              <h4>📥 Importar Configuración</h4>
+              <p class="small-text">Carga un archivo JSON previamente exportado</p>
+              <input type="file" id="importConfigFile" accept=".json" class="file-input" />
+              <button class="btn btn-primary" id="importConfigBtn">
+                📥 Importar Configuración
+              </button>
+              <div id="importStatus" class="import-status"></div>
+            </div>
+
+            <div class="import-export-divider"></div>
+
+            <div class="import-export-group">
+              <h4>📤 Exportar Configuración</h4>
+              <p class="small-text">Descarga toda la configuración como archivo JSON</p>
+              <button class="btn btn-success" id="exportConfigJsonBtn">
+                📤 Exportar JSON
+              </button>
+              <p class="small-text" style="margin-top: 10px; color: var(--text-muted);">
+                ✓ Incluye: Tanques, caudales, niveles, alertas y parámetros
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
