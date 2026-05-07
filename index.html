@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AquaOps — Sistema de Gestión de Tanques</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SIDEBAR
+═══════════════════════════════════════════════════════════ -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="logo">
+      <span class="logo-icon">💧</span>
+      <span class="logo-text">AquaOps</span>
+    </div>
+    <button class="sidebar-toggle" id="sidebarToggle" title="Colapsar menú">&#9776;</button>
+  </div>
+
+  <nav class="sidebar-nav">
+    <ul>
+      <li>
+        <a href="#" class="nav-link active" data-view="dashboard">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">Dashboard Global</span>
+        </a>
+      </li>
+      <li>
+        <a href="#" class="nav-link" data-view="tanks">
+          <span class="nav-icon">🗄️</span>
+          <span class="nav-label">Tanques</span>
+        </a>
+      </li>
+      <li>
+        <a href="#" class="nav-link" data-view="bulk-edit">
+          <span class="nav-icon">⚡</span>
+          <span class="nav-label">Edición Masiva</span>
+        </a>
+      </li>
+      <li>
+        <a href="#" class="nav-link" data-view="alerts">
+          <span class="nav-icon">🔔</span>
+          <span class="nav-label">Alertas</span>
+          <span class="badge" id="alertBadge">0</span>
+        </a>
+      </li>
+      <li>
+        <a href="#" class="nav-link" data-view="projections">
+          <span class="nav-icon">📈</span>
+          <span class="nav-label">Proyecciones</span>
+        </a>
+      </li>
+      <li>
+        <a href="#" class="nav-link" data-view="reports">
+          <span class="nav-icon">📋</span>
+          <span class="nav-label">Reportes</span>
+        </a>
+      </li>
+    </ul>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="last-update" id="lastUpdate">Última actualización: --</div>
+    <button class="btn btn-sm btn-outline" id="refreshBtn" title="Actualizar datos">
+      🔄 Actualizar
+    </button>
+  </div>
+</aside>
+
+<!-- ═══════════════════════════════════════════════════════════
+     CONTENIDO PRINCIPAL
+═══════════════════════════════════════════════════════════ -->
+<main class="main-content" id="mainContent">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="page-title" id="pageTitle">Dashboard Global</h1>
+      <span class="page-subtitle" id="pageSubtitle">Resumen operativo en tiempo real</span>
+    </div>
+    <div class="topbar-right">
+      <div class="system-time" id="systemTime">--:--:--</div>
+      <button class="btn btn-primary" id="addTankBtn">
+        <span>+</span> Nuevo Tanque
+      </button>
+    </div>
+  </header>
+
+  <!-- ─── VISTA: DASHBOARD ─── -->
+  <section class="view active" id="view-dashboard">
+    <div class="kpi-grid" id="kpiGrid">
+      <div class="kpi-card kpi-blue">
+        <div class="kpi-icon">🗄️</div>
+        <div class="kpi-data">
+          <div class="kpi-value" id="kpiTotalTanks">0</div>
+          <div class="kpi-label">Tanques Activos</div>
+        </div>
+      </div>
+      <div class="kpi-card kpi-green">
+        <div class="kpi-icon">💧</div>
+        <div class="kpi-data">
+          <div class="kpi-value" id="kpiTotalVolume">0 m³</div>
+          <div class="kpi-label">Volumen Total Almacenado</div>
+        </div>
+      </div>
+      <div class="kpi-card kpi-teal">
+        <div class="kpi-icon">📊</div>
+        <div class="kpi-data">
+          <div class="kpi-value" id="kpiAvgLevel">0%</div>
+          <div class="kpi-label">Nivel Promedio del Sistema</div>
+        </div>
+      </div>
+      <div class="kpi-card kpi-orange">
+        <div class="kpi-icon">⚠️</div>
+        <div class="kpi-data">
+          <div class="kpi-value" id="kpiAlertCount">0</div>
+          <div class="kpi-label">Alertas Activas</div>
+        </div>
+      </div>
+      <div class="kpi-card kpi-purple">
+        <div class="kpi-icon">⬆️</div>
+        <div class="kpi-data">
+          <div class="kpi-value" id="kpiTotalInflow">0 m³/h</div>
+          <div class="kpi-label">Caudal Total Entrada</div>
+        </div>
+      </div>
+      <div class="kpi-card kpi-red">
+        <div class="kpi-icon">⬇️</div>
+        <div class="kpi-data">
+          <div class="kpi-value" id="kpiTotalOutflow">0 m³/h</div>
+          <div class="kpi-label">Caudal Total Salida</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="card-header">
+        <h3>📈 Proyección del Sistema — Próximas 24 Horas</h3>
+        <div class="chart-controls">
+          <button class="btn btn-sm btn-outline active" data-hours="12" id="btn12h">12h</button>
+          <button class="btn btn-sm btn-outline" data-hours="24" id="btn24h">24h</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <canvas id="systemProjectionChart" height="100"></canvas>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <h3>Estado de Tanques</h3>
+    </div>
+    <div class="tanks-grid" id="dashboardTanksGrid"></div>
+  </section>
+
+  <!-- ─── VISTA: TANQUES ─── -->
+  <section class="view" id="view-tanks">
+    <div class="section-header">
+      <h3>Gestión de Tanques</h3>
+      <button class="btn btn-primary" id="addTankBtn2">+ Nuevo Tanque</button>
+    </div>
+    <div class="tanks-list" id="tanksListView"></div>
+  </section>
+
+  <!-- ─── VISTA: EDICIÓN MASIVA ─── -->
+  <section class="view" id="view-bulk-edit">
+    <div class="card">
+      <div class="card-header">
+        <h3>⚡ Actualización Ágil de Parámetros</h3>
+        <p class="card-subtitle">
+          Modifica el nivel actual, caudales de entrada y salida de todos los tanques simultáneamente
+        </p>
+      </div>
+      <div class="card-body">
+        <div class="bulk-edit-toolbar">
+          <button class="btn btn-primary" id="saveBulkBtn">💾 Guardar Todos los Cambios</button>
+          <button class="btn btn-outline" id="resetBulkBtn">↩️ Descartar Cambios</button>
+          <span class="bulk-status" id="bulkStatus"></span>
+        </div>
+        <div class="bulk-table-wrapper">
+          <table class="bulk-table" id="bulkEditTable">
+            <thead>
+              <tr>
+                <th style="min-width:180px">Tanque</th>
+                <th style="min-width:260px">Nivel Actual</th>
+                <th style="min-width:110px">Tendencia</th>
+                <th style="min-width:160px">Entrada (m³/h)</th>
+                <th style="min-width:140px">Salida (m³/h)</th>
+                <th style="min-width:120px">Tiempo Crítico</th>
+              </tr>
+            </thead>
+            <tbody id="bulkEditBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── VISTA: ALERTAS ─── -->
+  <section class="view" id="view-alerts">
+    <div class="alerts-layout">
+      <div class="card alerts-config-card">
+        <div class="card-header">
+          <h3>🔧 Configuración de Umbrales</h3>
+        </div>
+        <div class="card-body">
+          <div id="alertsConfigList"></div>
+        </div>
+      </div>
+      <div class="card alerts-active-card">
+        <div class="card-header">
+          <h3>🚨 Alertas Activas</h3>
+          <span class="badge badge-red" id="activeAlertsCount">0</span>
+        </div>
+        <div class="card-body">
+          <div id="activeAlertsList"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── VISTA: PROYECCIONES ─── -->
+  <section class="view" id="view-projections">
+    <div class="projections-toolbar card">
+      <div class="card-body toolbar-row">
+        <div class="form-group">
+          <label>Seleccionar Tanque</label>
+          <select id="projectionTankSelect" class="form-control">
+            <option value="all">Todos los tanques</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Horizonte de Proyección</label>
+          <select id="projectionHorizon" class="form-control">
+            <option value="12">12 horas</option>
+            <option value="24" selected>24 horas</option>
+            <option value="48">48 horas</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Hora de Corte (KPI)</label>
+          <input type="time" id="cutoffTime" class="form-control" value="06:00"/>
+        </div>
+        <button class="btn btn-primary" id="updateProjectionBtn">📊 Actualizar Proyección</button>
+      </div>
+    </div>
+
+    <div class="projection-kpis" id="projectionKpis"></div>
+
+    <div class="card chart-card">
+      <div class="card-header">
+        <h3 id="projectionChartTitle">Proyección de Niveles</h3>
+      </div>
+      <div class="card-body">
+        <canvas id="projectionChart" height="120"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>📋 Tabla de Proyección Horaria</h3>
+      </div>
+      <div class="card-body">
+        <div class="table-wrapper">
+          <table class="data-table" id="projectionTable">
+            <thead id="projectionTableHead"></thead>
+            <tbody id="projectionTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── VISTA: REPORTES ─── -->
+  <section class="view" id="view-reports">
+    <div class="reports-grid">
+      <div class="card report-card">
+        <div class="card-header">
+          <h3>📄 Reporte de Estado Actual</h3>
+        </div>
+        <div class="card-body">
+          <p>Exporta el estado actual de todos los tanques con niveles, caudales, tendencias y alertas activas.</p>
+          <div class="report-preview" id="reportPreview"></div>
+          <div class="report-actions">
+            <button class="btn btn-danger" id="exportPdfStatus">📄 Exportar PDF</button>
+            <button class="btn btn-success" id="exportExcelStatus">📊 Exportar Excel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card report-card">
+        <div class="card-header">
+          <h3>📈 Reporte de Proyecciones</h3>
+        </div>
+        <div class="card-body">
+          <p>Exporta las proyecciones de nivel para las próximas horas de todos los tanques.</p>
+          <div class="form-group">
+            <label>Horizonte de exportación</label>
+            <select id="reportHorizon" class="form-control">
+              <option value="12">12 horas</option>
+              <option value="24" selected>24 horas</option>
+            </select>
+          </div>
+          <div class="report-actions">
+            <button class="btn btn-danger" id="exportPdfProjection">📄 Exportar PDF</button>
+            <button class="btn btn-success" id="exportExcelProjection">📊 Exportar Excel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card report-card">
+        <div class="card-header">
+          <h3>⚙️ Reporte de Configuración</h3>
+        </div>
+        <div class="card-body">
+          <p>Exporta la configuración completa de todos los tanques: dimensiones, parámetros y umbrales de alerta.</p>
+          <div class="report-actions">
+            <button class="btn btn-danger" id="exportPdfConfig">📄 Exportar PDF</button>
+            <button class="btn btn-success" id="exportExcelConfig">📊 Exportar Excel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODAL: CREAR / EDITAR TANQUE
+═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="tankModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle">Nuevo Tanque</h2>
+      <button class="modal-close" id="closeTankModal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="tankForm" novalidate>
+        <input type="hidden" id="tankId"/>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="tankName">Nombre / ID del Tanque *</label>
+            <input type="text" id="tankName" class="form-control"
+                   placeholder="Ej: Tanque Norte T-01" required/>
+          </div>
+        </div>
+
+        <div class="form-row two-cols">
+          <div class="form-group">
+            <label for="tankHeight">Altura Total (m) *</label>
+            <input type="number" id="tankHeight" class="form-control"
+                   placeholder="Ej: 5.0" min="0.1" step="0.01" required/>
+          </div>
+          <div class="form-group">
+            <label for="tankArea">Área Base (m²) *</label>
+            <input type="number" id="tankArea" class="form-control"
+                   placeholder="Ej: 100" min="0.1" step="0.01" required/>
+          </div>
+        </div>
+
+        <div class="form-group info-box">
+          <span>📦 Volumen Total Calculado: <strong id="calcVolume">0.00 m³</strong></span>
+        </div>
+
+        <div class="form-row two-cols">
+          <div class="form-group">
+            <label for="tankMaxInflow">Caudal Máx. Entrada (m³/h) *</label>
+            <input type="number" id="tankMaxInflow" class="form-control"
+                   placeholder="Ej: 50" min="0" step="0.1" required/>
+          </div>
+          <div class="form-group">
+            <label for="tankOutflow">Caudal de Salida (m³/h) *</label>
+            <input type="number" id="tankOutflow" class="form-control"
+                   placeholder="Ej: 30" min="0" step="0.1" required/>
+          </div>
+        </div>
+
+        <div class="form-row two-cols">
+          <div class="form-group">
+            <label for="tankCurrentInflow">Caudal Entrada Actual (m³/h)</label>
+            <input type="number" id="tankCurrentInflow" class="form-control"
+                   placeholder="Ej: 40" min="0" step="0.1"/>
+          </div>
+          <div class="form-group">
+            <label>Nivel Actual</label>
+            <div class="dual-input-group">
+              <div class="dual-input-item">
+                <input type="number" id="tankCurrentLevelPct" class="form-control"
+                       placeholder="%" min="0" max="100" step="0.1"/>
+                <span class="dual-input-unit">%</span>
+              </div>
+              <span class="dual-input-sep">↔</span>
+              <div class="dual-input-item">
+                <input type="number" id="tankCurrentLevelM" class="form-control"
+                       placeholder="m" min="0" step="0.01"/>
+                <span class="dual-input-unit">m</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row two-cols">
+          <div class="form-group">
+            <label>Nivel Objetivo (Llenado)</label>
+            <div class="dual-input-group">
+              <div class="dual-input-item">
+                <input type="number" id="tankTargetLevelPct" class="form-control"
+                       placeholder="%" min="0" max="100" step="0.1"/>
+                <span class="dual-input-unit">%</span>
+              </div>
+              <span class="dual-input-sep">↔</span>
+              <div class="dual-input-item">
+                <input type="number" id="tankTargetLevelM" class="form-control"
+                       placeholder="m" min="0" step="0.01"/>
+                <span class="dual-input-unit">m</span>
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="tankColor">Color Identificador</label>
+            <input type="color" id="tankColor" class="form-control color-input" value="#0ea5e9"/>
+          </div>
+        </div>
+
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" id="cancelTankModal">Cancelar</button>
+      <button class="btn btn-primary" id="saveTankBtn">💾 Guardar Tanque</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODAL: DETALLE DE TANQUE
+═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="tankDetailModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <h2 id="detailModalTitle">Detalle del Tanque</h2>
+      <button class="modal-close" id="closeDetailModal">&times;</button>
+    </div>
+    <div class="modal-body" id="tankDetailBody"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     TOAST NOTIFICATIONS
+═══════════════════════════════════════════════════════════ -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     CONFIRM DIALOG
+═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2>⚠️ Confirmar Acción</h2>
+    </div>
+    <div class="modal-body">
+      <p id="confirmMessage">¿Está seguro de realizar esta acción?</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" id="confirmCancel">Cancelar</button>
+      <button class="btn btn-danger" id="confirmOk">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
