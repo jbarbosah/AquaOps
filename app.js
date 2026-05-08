@@ -15,11 +15,11 @@ const Storage = (() => {
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
-      if (!raw) return JSON.parse(JSON.stringify(defaultData));
+      if (!raw) return structuredClone(defaultData);
       return JSON.parse(raw);
     } catch (e) {
       console.error('Error cargando datos:', e);
-      return JSON.parse(JSON.stringify(defaultData));
+      return structuredClone(defaultData);
     }
   }
 
@@ -73,6 +73,15 @@ const Calculator = (() => {
     return remaining / net;
   }
 
+  function timeToTarget(tank) {
+    const net = netFlow(tank);
+    if (net <= 0 || !tank.targetLevelM) return null;
+    const targetVol = tank.area * tank.targetLevelM;
+    const curVol = currentVolume(tank);
+    if (curVol >= targetVol) return 0;
+    return (targetVol - curVol) / net;
+  }
+
   function timeToEmpty(tank) {
     const net = netFlow(tank);
     if (net >= 0) return null;
@@ -86,7 +95,16 @@ const Calculator = (() => {
     const currentVol = currentVolume(tank);
     const projectedVol = currentVol + (net * hoursAhead);
     const clampedVol = Math.min(Math.max(0, projectedVol), totalVolume(tank));
-    return clampedVol / tank.area;
+    return tank.area > 0 ? clampedVol / tank.area : 0;
+  }
+
+  function requiredInflow(tank, hoursToTarget) {
+    if (!tank.targetLevelM || hoursToTarget <= 0 || tank.area <= 0) return null;
+    const targetVol = tank.area * tank.targetLevelM;
+    const currentVol = currentVolume(tank);
+    const neededNetFlow = (targetVol - currentVol) / hoursToTarget;
+    const inflow = neededNetFlow + (tank.outflow || 0);
+    return Math.max(0, Math.min(inflow, tank.maxInflow));
   }
 
   function projectAtTime(tank, timeStr) {
@@ -165,6 +183,16 @@ const Calculator = (() => {
     return alerts;
   }
 
+  function getSystemHealth(tanks) {
+    if (tanks.length === 0) return 100;
+    const allAlerts = tanks.flatMap(t => evaluateAlerts(t));
+    const criticals = allAlerts.filter(a => a.severity === 'danger').length;
+    const warnings  = allAlerts.filter(a => a.severity === 'warning').length;
+    
+    let score = 100 - (criticals * 25) - (warnings * 10);
+    return Math.max(0, score);
+  }
+
   function formatTime(hours) {
     if (hours === null || hours === undefined || isNaN(hours)) return '—';
     if (hours === Infinity || hours > 9999) return '> 9999h';
@@ -197,7 +225,8 @@ const Calculator = (() => {
   return {
     currentVolume, totalVolume, levelPercent, netFlow, trend,
     timeToFull, timeToEmpty, projectLevel, projectAtTime,
-    evaluateAlerts, formatTime, generateProjectionPoints
+    evaluateAlerts, getSystemHealth, formatTime, generateProjectionPoints, timeToTarget,
+    requiredInflow
   };
 })();
 
@@ -478,6 +507,8 @@ const Exporter = (() => {
       'Volumen Total (m³)':        Calculator.totalVolume(tank).toFixed(2),
       'Caudal Máx. Entrada (m³/h)': tank.maxInflow,
       'Caudal Salida Param. (m³/h)': tank.outflow,
+      'Nivel Actual (m)':          UI.formatNumber(tank.currentLevelM, 3),
+      'Nivel Objetivo (m)':        tank.targetLevelM ? UI.formatNumber(tank.targetLevelM, 3) : 'No definido',
       'Alerta Nivel Bajo':         tank.alerts?.lowLevel?.enabled
         ? `${tank.alerts.lowLevel.value} ${tank.alerts.lowLevel.unit === 'percent' ? '%' : 'm'}`
         : 'No configurada',
@@ -616,6 +647,10 @@ const Exporter = (() => {
         if (!tank.name || tank.height === undefined || tank.area === undefined) {
           throw new Error(`Tanque ${idx + 1}: datos incompletos`);
         }
+        // Asegurar que los niveles existan en el registro importado
+        tank.currentLevelM = tank.currentLevelM !== undefined ? tank.currentLevelM : 0;
+        tank.targetLevelM  = tank.targetLevelM  !== undefined ? tank.targetLevelM  : null;
+        tank.currentInflow = tank.currentInflow !== undefined ? tank.currentInflow : 0;
       });
 
       return { success: true, data: importedData };
@@ -654,6 +689,7 @@ const App = (() => {
     bindBulkEdit();
     bindProjections();
     bindReports();
+    bindSimulation();
     bindRefresh();
     startClock();
     renderCurrentView();
@@ -739,6 +775,17 @@ const App = (() => {
     });
   }
 
+  function bindSimulation() {
+    // Busca un botón con id 'advanceTimeBtn' en tu HTML
+    const btn = document.getElementById('advanceTimeBtn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        const hours = 1; // Puedes hacerlo dinámico con un input
+        advanceTime(hours);
+      });
+    }
+  }
+
   function navigateTo(view) {
     state.currentView = view;
 
@@ -780,19 +827,24 @@ const App = (() => {
   function renderDashboard() {
     const tanks = state.tanks;
 
-    const totalVol    = tanks.reduce((s, t) => s + Calculator.currentVolume(t), 0);
-    const avgLevel    = tanks.length
-      ? tanks.reduce((s, t) => s + Calculator.levelPercent(t), 0) / tanks.length : 0;
+    const totalCurrentVol = tanks.reduce((s, t) => s + Calculator.currentVolume(t), 0);
+    const totalCapacity   = tanks.reduce((s, t) => s + Calculator.totalVolume(t), 0);
+    const globalPct       = totalCapacity > 0 ? (totalCurrentVol / totalCapacity) * 100 : 0;
+    
     const allAlerts   = tanks.flatMap(t => Calculator.evaluateAlerts(t));
     const totalInflow  = tanks.reduce((s, t) => s + (t.currentInflow || 0), 0);
     const totalOutflow = tanks.reduce((s, t) => s + (t.outflow || 0), 0);
 
     document.getElementById('kpiTotalTanks').textContent  = tanks.length;
-    document.getElementById('kpiTotalVolume').textContent = `${UI.formatNumber(totalVol, 0)} m³`;
-    document.getElementById('kpiAvgLevel').textContent    = `${UI.formatNumber(avgLevel, 1)}%`;
+    document.getElementById('kpiGlobalCapacity').textContent = `${UI.formatNumber(totalCapacity, 0)} m³`;
+    document.getElementById('kpiTotalVolume').textContent    = `${UI.formatNumber(totalCurrentVol, 0)} m³`;
+    document.getElementById('kpiGlobalPct').textContent      = `${UI.formatNumber(globalPct, 1)}%`;
     document.getElementById('kpiAlertCount').textContent  = allAlerts.length;
     document.getElementById('kpiTotalInflow').textContent  = `${UI.formatNumber(totalInflow, 1)} m³/h`;
     document.getElementById('kpiTotalOutflow').textContent = `${UI.formatNumber(totalOutflow, 1)} m³/h`;
+    
+    const healthEl = document.getElementById('kpiHealthScore');
+    if (healthEl) healthEl.textContent = `${healthScore}%`;
 
     const alertCard = document.querySelector('.kpi-orange');
     if (alertCard) alertCard.classList.toggle('kpi-alert-active', allAlerts.length > 0);
@@ -1040,47 +1092,8 @@ const App = (() => {
       document.getElementById(id).addEventListener('input', updateCalcVolume);
     });
 
-    document.getElementById('tankCurrentLevelPct').addEventListener('input', function () {
-      const height = parseFloat(document.getElementById('tankHeight').value) || 0;
-      if (height > 0) {
-        const m = (parseFloat(this.value) / 100) * height;
-        document.getElementById('tankCurrentLevelM').value = isNaN(m) ? '' : m.toFixed(3);
-      }
-    });
-
-    document.getElementById('tankCurrentLevelM').addEventListener('input', function () {
-      const height = parseFloat(document.getElementById('tankHeight').value) || 0;
-      if (height > 0) {
-        const pct = (parseFloat(this.value) / height) * 100;
-        document.getElementById('tankCurrentLevelPct').value = isNaN(pct) ? '' : pct.toFixed(2);
-      }
-    });
-
-    document.getElementById('tankTargetLevelPct').addEventListener('input', function () {
-      const height = parseFloat(document.getElementById('tankHeight').value) || 0;
-      if (height > 0) {
-        const m = (parseFloat(this.value) / 100) * height;
-        document.getElementById('tankTargetLevelM').value = isNaN(m) ? '' : m.toFixed(3);
-      }
-    });
-
-    document.getElementById('tankTargetLevelM').addEventListener('input', function () {
-      const height = parseFloat(document.getElementById('tankHeight').value) || 0;
-      if (height > 0) {
-        const pct = (parseFloat(this.value) / height) * 100;
-        document.getElementById('tankTargetLevelPct').value = isNaN(pct) ? '' : pct.toFixed(2);
-      }
-    });
-
     document.getElementById('tankHeight').addEventListener('input', function () {
       updateCalcVolume();
-      const height     = parseFloat(this.value) || 0;
-      const pctCurrent = parseFloat(document.getElementById('tankCurrentLevelPct').value);
-      const pctTarget  = parseFloat(document.getElementById('tankTargetLevelPct').value);
-      if (!isNaN(pctCurrent) && height > 0)
-        document.getElementById('tankCurrentLevelM').value = ((pctCurrent / 100) * height).toFixed(3);
-      if (!isNaN(pctTarget) && height > 0)
-        document.getElementById('tankTargetLevelM').value  = ((pctTarget  / 100) * height).toFixed(3);
     });
   }
 
@@ -1112,13 +1125,6 @@ const App = (() => {
     document.getElementById('tankArea').value          = tank.area;
     document.getElementById('tankMaxInflow').value     = tank.maxInflow;
     document.getElementById('tankOutflow').value       = tank.outflow;
-    document.getElementById('tankCurrentInflow').value = tank.currentInflow || '';
-    document.getElementById('tankCurrentLevelM').value = tank.currentLevelM || '';
-    document.getElementById('tankCurrentLevelPct').value = tank.height > 0
-      ? ((tank.currentLevelM / tank.height) * 100).toFixed(2) : '';
-    document.getElementById('tankTargetLevelM').value   = tank.targetLevelM || '';
-    document.getElementById('tankTargetLevelPct').value = tank.height > 0 && tank.targetLevelM
-      ? ((tank.targetLevelM / tank.height) * 100).toFixed(2) : '';
     document.getElementById('tankColor').value = tank.color || '#0ea5e9';
     updateCalcVolume();
     document.getElementById('tankModal').classList.add('active');
@@ -1135,9 +1141,6 @@ const App = (() => {
     const area          = parseFloat(document.getElementById('tankArea').value);
     const maxInflow     = parseFloat(document.getElementById('tankMaxInflow').value);
     const outflow       = parseFloat(document.getElementById('tankOutflow').value);
-    const currentInflow = parseFloat(document.getElementById('tankCurrentInflow').value) || 0;
-    const currentLevelM = parseFloat(document.getElementById('tankCurrentLevelM').value) || 0;
-    const targetLevelM  = parseFloat(document.getElementById('tankTargetLevelM').value)  || null;
     const color         = document.getElementById('tankColor').value;
 
     if (!name)                          { UI.showToast('El nombre es requerido', 'error'); return; }
@@ -1145,36 +1148,57 @@ const App = (() => {
     if (isNaN(area)   || area   <= 0)   { UI.showToast('El área debe ser > 0',   'error'); return; }
     if (isNaN(maxInflow) || maxInflow < 0) { UI.showToast('Caudal entrada inválido', 'error'); return; }
     if (isNaN(outflow)   || outflow   < 0) { UI.showToast('Caudal salida inválido',  'error'); return; }
-    if (currentLevelM > height)         { UI.showToast('El nivel no puede superar la altura total', 'error'); return; }
-
-    const tankData = {
-      name, height, area, maxInflow, outflow,
-      currentInflow: Math.min(currentInflow, maxInflow),
-      currentLevelM: Math.min(currentLevelM, height),
-      targetLevelM:  targetLevelM ? Math.min(targetLevelM, height) : null,
-      color,
-      alerts: {
-        lowLevel:      { enabled: false, value: 20, unit: 'percent' },
-        criticalLevel: { enabled: false, value: 10, unit: 'percent' }
-      }
-    };
 
     if (state.editingTankId) {
       const idx = state.tanks.findIndex(t => t.id === state.editingTankId);
       if (idx !== -1) {
-        tankData.alerts = state.tanks[idx].alerts || tankData.alerts;
-        state.tanks[idx] = { ...state.tanks[idx], ...tankData };
+        // Solo actualizamos los campos físicos y básicos
+        state.tanks[idx].name = name;
+        state.tanks[idx].height = height;
+        state.tanks[idx].area = area;
+        state.tanks[idx].maxInflow = maxInflow;
+        state.tanks[idx].outflow = outflow;
+        state.tanks[idx].color = color;
+        
+        // Ajustar nivel actual si la nueva altura es menor
+        if (state.tanks[idx].currentLevelM > height) {
+          state.tanks[idx].currentLevelM = height;
+        }
+        // Ajustar nivel objetivo si la nueva altura es menor
+        if (state.tanks[idx].targetLevelM && state.tanks[idx].targetLevelM > height) {
+          state.tanks[idx].targetLevelM = height;
+        }
         UI.showToast(`Tanque "${name}" actualizado`, 'success');
       }
     } else {
-      tankData.id = UI.generateId();
-      state.tanks.push(tankData);
+      const newTank = {
+        id: UI.generateId(),
+        name, height, area, maxInflow, outflow, color,
+        currentInflow: 0,
+        currentLevelM: 0,
+        targetLevelM: null,
+        alerts: {
+          lowLevel:      { enabled: false, value: 20, unit: 'percent' },
+          criticalLevel: { enabled: false, value: 10, unit: 'percent' }
+        }
+      };
+      state.tanks.push(newTank);
       UI.showToast(`Tanque "${name}" creado`, 'success');
     }
 
     saveData();
     closeTankModal();
     renderCurrentView();
+  }
+
+  function advanceTime(hours) {
+    state.tanks = state.tanks.map(tank => {
+      const newLevel = Calculator.projectLevel(tank, hours);
+      return { ...tank, currentLevelM: parseFloat(newLevel.toFixed(4)) };
+    });
+    saveData();
+    renderCurrentView();
+    UI.showToast(`Simulación: se ha avanzado ${hours}h de operación`, 'info');
   }
 
   // ─── ELIMINAR TANQUE ──────────────────────────────────────────────────
@@ -1207,6 +1231,7 @@ const App = (() => {
     const proj24    = Calculator.projectLevel(tank, 24);
     const proj12Pct = Math.min(100, Math.max(0, (proj12 / tank.height) * 100));
     const proj24Pct = Math.min(100, Math.max(0, (proj24 / tank.height) * 100));
+    const reqInflow = Calculator.requiredInflow(tank, 12); // Para llegar al objetivo en 12h
 
     document.getElementById('detailModalTitle').textContent = `📊 ${tank.name}`;
     document.getElementById('tankDetailBody').innerHTML = `
@@ -1263,6 +1288,14 @@ const App = (() => {
               <div class="flow-value">${UI.formatNumber(tank.outflow || 0, 2)}</div>
               <div class="flow-unit">m³/h Salida</div>
             </div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>Recomendación Operativa</h4>
+          <div class="recommendation-card">
+            <p>Para alcanzar el nivel objetivo (${tank.targetLevelM}m) en 12 horas, configure:</p>
+            <strong>${reqInflow ? UI.formatNumber(reqInflow, 2) + ' m³/h' : 'N/A'}</strong>
           </div>
         </div>
 
@@ -1386,7 +1419,7 @@ const App = (() => {
                          class="form-control form-control-sm bulk-level-m"
                          data-id="${tank.id}"
                          data-height="${tank.height}"
-                         value="${UI.formatNumber(tank.currentLevelM, 3)}"
+                         value="${tank.currentLevelM.toFixed(3)}"
                          min="0"
                          max="${tank.height}"
                          step="0.001"
@@ -1399,13 +1432,44 @@ const App = (() => {
                          class="form-control form-control-sm bulk-level-pct"
                          data-id="${tank.id}"
                          data-height="${tank.height}"
-                         value="${UI.formatNumber(pct, 2)}"
+                         value="${pct.toFixed(2)}"
                          min="0"
                          max="100"
                          step="0.01"
                          title="Nivel en porcentaje"/>
                   <span class="bulk-field-unit">%</span>
                 </div>
+              </div>
+            </div>
+          </td>
+
+          <!-- Nivel Objetivo -->
+          <td>
+            <div class="bulk-dual-inputs">
+              <div class="bulk-dual-field">
+                <input type="number"
+                       class="form-control form-control-sm bulk-target-m"
+                       data-id="${tank.id}"
+                       data-height="${tank.height}"
+                       value="${tank.targetLevelM !== null ? tank.targetLevelM.toFixed(3) : ''}"
+                       min="0"
+                       max="${tank.height}"
+                       step="0.001"
+                       placeholder="Meta m"/>
+                <span class="bulk-field-unit">m</span>
+              </div>
+              <span class="bulk-dual-sep">↔</span>
+              <div class="bulk-dual-field">
+                <input type="number"
+                       class="form-control form-control-sm bulk-target-pct"
+                       data-id="${tank.id}"
+                       data-height="${tank.height}"
+                       value="${tank.targetLevelM !== null ? ((tank.targetLevelM / tank.height) * 100).toFixed(2) : ''}"
+                       min="0"
+                       max="100"
+                       step="0.01"
+                       placeholder="%"/>
+                <span class="bulk-field-unit">%</span>
               </div>
             </div>
           </td>
@@ -1421,7 +1485,7 @@ const App = (() => {
               <input type="number"
                      class="form-control bulk-inflow"
                      data-id="${tank.id}"
-                     value="${tank.currentInflow || 0}"
+                     value="${(tank.currentInflow || 0).toFixed(1)}"
                      min="0"
                      max="${tank.maxInflow}"
                      step="0.1"
@@ -1435,7 +1499,7 @@ const App = (() => {
             <input type="number"
                    class="form-control bulk-outflow"
                    data-id="${tank.id}"
-                   value="${tank.outflow || 0}"
+                   value="${(tank.outflow || 0).toFixed(1)}"
                    min="0"
                    step="0.1"/>
           </td>
@@ -1459,9 +1523,11 @@ const App = (() => {
       input.addEventListener('input', function () {
         const id     = this.dataset.id;
         const height = parseFloat(this.dataset.height) || 0;
-        const m      = parseFloat(this.value);
+        let m        = parseFloat(this.value);
         if (!isNaN(m) && height > 0) {
-          const pctVal  = Math.min(100, Math.max(0, (m / height) * 100));
+          if (m > height) { m = height; this.value = m; }
+          if (m < 0) { m = 0; this.value = 0; }
+          const pctVal  = (m / height) * 100;
           const pctInput = tbody.querySelector(`.bulk-level-pct[data-id="${id}"]`);
           if (pctInput) pctInput.value = pctVal.toFixed(2);
           updateBulkLevelBar(id, pctVal, tbody);
@@ -1475,12 +1541,48 @@ const App = (() => {
       input.addEventListener('input', function () {
         const id     = this.dataset.id;
         const height = parseFloat(this.dataset.height) || 0;
-        const pctVal = parseFloat(this.value);
+        let pctVal   = parseFloat(this.value);
         if (!isNaN(pctVal) && height > 0) {
-          const mVal   = Math.min(height, Math.max(0, (pctVal / 100) * height));
+          if (pctVal > 100) { pctVal = 100; this.value = 100; }
+          if (pctVal < 0)   { pctVal = 0;   this.value = 0; }
+          const mVal   = (pctVal / 100) * height;
           const mInput = tbody.querySelector(`.bulk-level-m[data-id="${id}"]`);
           if (mInput) mInput.value = mVal.toFixed(3);
           updateBulkLevelBar(id, pctVal, tbody);
+        }
+        updateBulkRowPreview(id, tbody);
+      });
+    });
+
+    // ── Bind: Objetivo metros → porcentaje ────────────────────────────
+    tbody.querySelectorAll('.bulk-target-m').forEach(input => {
+      input.addEventListener('input', function () {
+        const id     = this.dataset.id;
+        const height = parseFloat(this.dataset.height) || 0;
+        let m        = parseFloat(this.value);
+        if (!isNaN(m) && height > 0) {
+          if (m > height) { m = height; this.value = m; }
+          if (m < 0) { m = 0; this.value = 0; }
+          const pctVal = (m / height) * 100;
+          const pctInput = tbody.querySelector(`.bulk-target-pct[data-id="${id}"]`);
+          if (pctInput) pctInput.value = pctVal.toFixed(2);
+        }
+        updateBulkRowPreview(id, tbody);
+      });
+    });
+
+    // ── Bind: Objetivo porcentaje → metros ────────────────────────────
+    tbody.querySelectorAll('.bulk-target-pct').forEach(input => {
+      input.addEventListener('input', function () {
+        const id     = this.dataset.id;
+        const height = parseFloat(this.dataset.height) || 0;
+        let pctVal   = parseFloat(this.value);
+        if (!isNaN(pctVal) && height > 0) {
+          if (pctVal > 100) { pctVal = 100; this.value = 100; }
+          if (pctVal < 0)   { pctVal = 0;   this.value = 0; }
+          const mVal = (pctVal / 100) * height;
+          const mInput = tbody.querySelector(`.bulk-target-m[data-id="${id}"]`);
+          if (mInput) mInput.value = mVal.toFixed(3);
         }
         updateBulkRowPreview(id, tbody);
       });
@@ -1520,15 +1622,22 @@ const App = (() => {
     const inflow  = parseFloat(row.querySelector('.bulk-inflow').value)  || 0;
     const outflow = parseFloat(row.querySelector('.bulk-outflow').value) || 0;
     const levelM  = parseFloat(row.querySelector('.bulk-level-m').value);
+    const targetM = parseFloat(row.querySelector('.bulk-target-m').value);
+    
     const resolvedLevelM = isNaN(levelM) ? tank.currentLevelM : levelM;
+    const resolvedTargetM = isNaN(targetM) ? null : targetM;
 
-    const tempTank = { ...tank, currentInflow: inflow, outflow, currentLevelM: resolvedLevelM };
+    const tempTank = { ...tank, currentInflow: inflow, outflow, currentLevelM: resolvedLevelM, targetLevelM: resolvedTargetM };
 
     const trendType    = Calculator.trend(tempTank);
     const ttf          = Calculator.timeToFull(tempTank);
+    const ttt          = Calculator.timeToTarget(tempTank);
     const tte          = Calculator.timeToEmpty(tempTank);
+
     const criticalTime = trendType === 'filling'
-      ? Calculator.formatTime(ttf)
+      ? (ttt !== null 
+          ? `${Calculator.formatTime(ttt)} (a meta)` 
+          : Calculator.formatTime(ttf))
       : trendType === 'draining'
       ? Calculator.formatTime(tte)
       : '—';
@@ -1558,10 +1667,13 @@ const App = (() => {
       const inflow  = parseFloat(row.querySelector('.bulk-inflow').value);
       const outflow = parseFloat(row.querySelector('.bulk-outflow').value);
       const levelM  = parseFloat(row.querySelector('.bulk-level-m').value);
+      const targetM = parseFloat(row.querySelector('.bulk-target-m').value);
 
       if (isNaN(inflow) || inflow < 0) {
         errors.push(`"${tank.name}": caudal de entrada inválido`); return;
       }
+      const targetVal = isNaN(targetM) ? null : parseFloat(targetM.toFixed(4));
+
       if (inflow > tank.maxInflow) {
         errors.push(`"${tank.name}": entrada ${inflow} supera el máximo ${tank.maxInflow} m³/h`); return;
       }
@@ -1574,15 +1686,20 @@ const App = (() => {
       if (levelM > tank.height) {
         errors.push(`"${tank.name}": nivel ${levelM}m supera la altura total ${tank.height}m`); return;
       }
+      if (targetVal !== null && targetVal > tank.height) {
+        errors.push(`"${tank.name}": nivel objetivo ${targetVal}m supera la altura total ${tank.height}m`); return;
+      }
 
       const changed =
         tank.currentInflow !== inflow  ||
         tank.outflow       !== outflow ||
-        tank.currentLevelM !== levelM;
+        tank.currentLevelM !== levelM ||
+        tank.targetLevelM  !== targetVal;
 
       if (changed) {
         tank.currentInflow = inflow;
         tank.outflow       = outflow;
+        tank.targetLevelM  = targetVal;
         tank.currentLevelM = parseFloat(levelM.toFixed(4));
         changes++;
       }
@@ -2086,6 +2203,7 @@ const App = (() => {
     openAddTankModal,
     openEditTankModal,
     openTankDetail,
+    advanceTime,
     deleteTank,
     navigateTo
   };
